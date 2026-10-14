@@ -38,6 +38,17 @@ h2{font-size:14px;color:#8b949e;margin:18px 0 8px}
 <div style=margin-bottom:6px><input id=uurl placeholder="https://host/blocklist.bin" size=40> every <input id=uiv size=2 value=24>h
 <button onclick=saveUpd()>Save</button> <button onclick=fetchNow()>Fetch now</button></div>
 <div style="color:#8b949e;font-size:12px;margin-bottom:18px">device pulls a prebuilt <code>blocklist.bin</code> on a schedule (e.g. a GitHub release asset). last: <span id=ustat>&mdash;</span></div>
+<h2>UPSTREAM DNS RESOLVER</h2>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px">
+<input id=updns placeholder="9.9.9.9" size=16>
+<button onclick=saveUpstream()>Save DNS</button>
+<span style="color:#8b949e;font-size:12px">Presets:</span>
+<button onclick="setUpstreamPreset('9.9.9.9')">Quad9</button>
+<button onclick="setUpstreamPreset('1.1.1.1')">Cloudflare</button>
+<button onclick="setUpstreamPreset('8.8.8.8')">Google</button>
+<button onclick="setUpstreamPreset('94.140.14.14')">AdGuard</button>
+</div>
+<div style="color:#8b949e;font-size:12px;margin-bottom:18px">Current resolver: <b id=curupdns style="color:#3fb950">9.9.9.9</b> &mdash; unblocked queries are relayed here</div>
 <h2>FIRMWARE &mdash; OTA UPDATE</h2>
 <form id=fwf style=margin-bottom:6px><input type=file id=fwb accept=.bin><button>Flash firmware</button> <span id=fwmsg style=color:#8b949e></span></form>
 <div style="color:#8b949e;font-size:12px;margin-bottom:18px">upload <code>.pio/build/c3/firmware.bin</code> &mdash; device verifies it and reboots into it</div>
@@ -60,6 +71,7 @@ blockdot.textContent=on?'🛡️':'⏸️';blockbar.style.borderColor=on?'#30363
 blockstate.textContent=on?'Blocking active':(s.resumeIn>0?'Paused — resumes in '+s.resumeIn+'s':'Paused');
 pausebtn.textContent=on?'Pause':'Resume';pausedur.style.display=on?'':'none';
 sys.innerHTML=[['Total blocked',fmt(s.blocked),'b'],['Total allowed',fmt(s.allowed),'a'],['Blocklist',fmt(s.domains)+' domains',''],
+['Upstream DNS',s.upstream||'9.9.9.9',''],
 ['Clients',s.clients.length,''],['WiFi',s.rssi+' dBm',''],['Temp',s.temp+' °C',''],['Free RAM',Math.round(s.heap/1024)+' KB',''],['Uptime',s.uptime,'']]
 .map(c=>`<div class=card><div class="v ${c[2]}">${c[1]}</div><div class=l>${c[0]}</div></div>`).join('');
 ct.tBodies[0].innerHTML=s.clients.sort((a,b)=>(b.blocked+b.allowed)-(a.blocked+a.allowed)).map(c=>
@@ -69,7 +81,11 @@ ct.tBodies[0].innerHTML=s.clients.sort((a,b)=>(b.blocked+b.allowed)-(a.blocked+a
 cl.tBodies[0].innerHTML=s.custom.map(d=>`<tr><td>${esc(d)}</td><td style=text-align:right><button class=rmbtn data-d="${esc(d)}">remove</button></td></tr>`).join('')||'<tr><td style=color:#8b949e>none yet</td></tr>';
 if(document.activeElement!=uurl)uurl.value=s.upurl||'';
 if(document.activeElement!=uiv)uiv.value=s.upiv||24;
-ustat.textContent=s.upstat||'—';}
+ustat.textContent=s.upstat||'—';
+if(document.activeElement!=updns)updns.value=s.upstream||'9.9.9.9';
+if(window.curupdns)curupdns.textContent=s.upstream||'9.9.9.9';}
+function saveUpstream(){let ip=updns.value.trim();if(ip)fetch('/setupstream?ip='+encodeURIComponent(ip),{headers:CSRF_HDRS}).then(r=>r.text()).then(t=>{if(t!='ok')alert(t);load()})}
+function setUpstreamPreset(ip){updns.value=ip;saveUpstream()}
 function addDom(){let d=dom.value.trim();if(d){fetch('/addblock?d='+encodeURIComponent(d),{headers:CSRF_HDRS}).then(()=>{dom.value='';load()})}}
 ct.addEventListener('click',e=>{if(e.target.classList.contains('ban'))fetch('/ban?ip='+e.target.dataset.ip,{headers:CSRF_HDRS}).then(load)});
 cl.addEventListener('click',e=>{if(e.target.classList.contains('rmbtn'))fetch('/unblock?d='+encodeURIComponent(e.target.dataset.d),{headers:CSRF_HDRS}).then(load)});

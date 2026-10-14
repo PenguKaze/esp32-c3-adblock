@@ -27,7 +27,8 @@
 #ifndef UPSTREAM_PORT
 #define UPSTREAM_PORT 53
 #endif
-static const IPAddress UPSTREAM(UPSTREAM_IP);
+static const IPAddress DEFAULT_UPSTREAM(UPSTREAM_IP);
+static IPAddress upstreamDns(UPSTREAM_IP);
 static const uint16_t DNS_PORT = 53;
 static const char* BLOCKLIST_PATH = "/blocklist.bin";
 static const int HASH_BYTES = 5;
@@ -206,6 +207,17 @@ static void saveBanned() {
   f.close();
 }
 
+static void loadDnsCfg() {
+  File f = LittleFS.open("/dns.cfg", "r"); if (!f) return;
+  String s = f.readStringUntil('\n'); s.trim(); f.close();
+  IPAddress ip;
+  if (ip.fromString(s) && (uint32_t)ip != 0 && (uint32_t)ip != 0xFFFFFFFF) upstreamDns = ip;
+}
+static void saveDnsCfg() {
+  File f = LittleFS.open("/dns.cfg", "w"); if (!f) return;
+  f.println(upstreamDns.toString()); f.close();
+}
+
 // ---------- client table ----------
 static void getMac(uint32_t ip, uint8_t* mac) {
   memset(mac, 0, 6); ip4_addr_t ipa; ipa.addr = ip;
@@ -253,12 +265,12 @@ static int forwardUpstream(int qlen, int qend) {
   const bool haveQ = ql > 0 && ql <= (int)sizeof(q) && qend <= qlen;
   if (haveQ) memcpy(q, buf + 12, ql);
   buf[0] = wid >> 8; buf[1] = wid & 0xFF;
-  upstreamCli.beginPacket(UPSTREAM, UPSTREAM_PORT); upstreamCli.write(buf, qlen); upstreamCli.endPacket();
+  upstreamCli.beginPacket(upstreamDns, UPSTREAM_PORT); upstreamCli.write(buf, qlen); upstreamCli.endPacket();
   const uint32_t t0 = millis();
   while (millis() - t0 < 1000) {                         // deadline, not a retry count
     int sz = upstreamCli.parsePacket();
     if (sz <= 0) { delay(1); continue; }
-    const bool fromUp = upstreamCli.remoteIP() == UPSTREAM && upstreamCli.remotePort() == UPSTREAM_PORT;
+    const bool fromUp = upstreamCli.remoteIP() == upstreamDns && upstreamCli.remotePort() == UPSTREAM_PORT;
     int n = upstreamCli.read(buf, sizeof(buf));
     upstreamCli.flush();                                 // oversized datagram can't strand rx_buffer
     if (!fromUp || n < 12 || sz > (int)sizeof(buf)) continue;
@@ -323,6 +335,7 @@ static void handleStats() {
   String j = "{\"ip\":\"" + WiFi.localIP().toString() + "\",\"blocked\":" + totalBlocked + ",\"allowed\":" + totalAllowed +
              ",\"domains\":" + numHashes + ",\"rssi\":" + WiFi.RSSI() + ",\"temp\":" + String(temperatureRead(), 1) +
              ",\"heap\":" + ESP.getFreeHeap() + ",\"uptime\":\"" + ut + "\"" +
+             ",\"upstream\":\"" + upstreamDns.toString() + "\"" +
              ",\"upurl\":\"" + jesc(updateUrl) + "\",\"upiv\":" + updateIntervalH + ",\"upstat\":\"" + jesc(updateStatus) + "\"" +
              ",\"blocking\":" + (blockingOn ? "true" : "false") +
              ",\"resumeIn\":" + (uint32_t)(!blockingOn && resumeAt ? (resumeAt - millis()) / 1000 : 0) +
@@ -575,8 +588,8 @@ void setup() {
     Serial.printf("blocklist: %u domains\n", numHashes);
     buildFlashIndex();
   }
-  loadCustom(); loadBanned(); loadUpdateCfg();
-  Serial.printf("custom: %d, banned: %d\n", numCustom, numBanned);
+  loadCustom(); loadBanned(); loadUpdateCfg(); loadDnsCfg();
+  Serial.printf("custom: %d, banned: %d, upstream: %s\n", numCustom, numBanned, upstreamDns.toString().c_str());
 
   // Hold BOOT at power-on to wipe saved WiFi and force the setup portal.
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -622,6 +635,20 @@ void setup() {
     if (web.hasArg("u")) updateUrl = web.arg("u");
     if (web.hasArg("h")) { updateIntervalH = web.arg("h").toInt(); if (updateIntervalH < 1) updateIntervalH = 1; }
     saveUpdateCfg(); web.send(200, "text/plain", "ok");
+  });
+  web.on("/setupstream", []() {
+    if (!requireAuth()) return;
+    if (web.hasArg("ip")) {
+      IPAddress ip;
+      if (ip.fromString(web.arg("ip")) && (uint32_t)ip != 0 && (uint32_t)ip != 0xFFFFFFFF) {
+        upstreamDns = ip;
+        saveDnsCfg();
+        Serial.printf("[dns] upstream changed to %s\n", upstreamDns.toString().c_str());
+        web.send(200, "text/plain", "ok");
+        return;
+      }
+    }
+    web.send(400, "text/plain", "invalid IP");
   });
   web.begin();
   ArduinoOTA.setHostname("c3adblock");   // pio run -t upload --upload-port c3adblock.local
